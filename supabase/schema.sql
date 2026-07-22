@@ -63,6 +63,14 @@ create policy "owner can update booking hours" on booking_hours
   using (auth.role() = 'authenticated')
   with check (auth.role() = 'authenticated');
 
+-- Needed because the dashboard saves hours via upsert(), which Postgres
+-- executes as INSERT ... ON CONFLICT DO UPDATE — the INSERT half still
+-- needs a policy to pass even though every row already exists.
+drop policy if exists "owner can insert booking hours" on booking_hours;
+create policy "owner can insert booking hours" on booking_hours
+  for insert
+  with check (auth.role() = 'authenticated');
+
 -- ── booking_blocked_dates (specific days closed — holidays, days off) ─
 create table if not exists booking_blocked_dates (
   id uuid primary key default gen_random_uuid(),
