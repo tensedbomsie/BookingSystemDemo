@@ -1,82 +1,90 @@
--- Run in the Supabase SQL Editor for this project's OWN Supabase project
--- (single-tenant: one Supabase project per deployed business, not shared).
+-- Run in the Supabase SQL Editor for this project.
+-- Shared with the AdminDashboard project (E:\GithubAdminDashboard) — table
+-- names below are prefixed booking_/bookings to avoid colliding with its
+-- existing products/orders/order_items/customers/business_settings tables.
 --
 -- Booking System — customers self-serve booking on the public page,
 -- the business owner manages hours/bookings from /dashboard.
+--
+-- Note: RLS here uses `auth.role() = 'authenticated'` (matches this
+-- single-tenant model — one deployment per business, so "any authenticated
+-- user" is fine). If this project ever serves two different real clients
+-- with separate logins, split into separate Supabase projects instead of
+-- adding per-owner row scoping here.
 
--- ── business_settings (singleton row) ──────────────────────────────
-create table if not exists business_settings (
+-- ── booking_settings (singleton row) ────────────────────────────────
+create table if not exists booking_settings (
   id uuid primary key default gen_random_uuid(),
   business_name text not null default 'Sample Business',
   phone text,
   created_at timestamptz not null default now()
 );
 
-insert into business_settings (business_name, phone)
+insert into booking_settings (business_name, phone)
 select 'Sample Business', '(555) 123-4567'
-where not exists (select 1 from business_settings);
+where not exists (select 1 from booking_settings);
 
-alter table business_settings enable row level security;
+alter table booking_settings enable row level security;
 
-drop policy if exists "anyone can read business settings" on business_settings;
-create policy "anyone can read business settings" on business_settings
+drop policy if exists "anyone can read booking settings" on booking_settings;
+create policy "anyone can read booking settings" on booking_settings
   for select
   using (true);
 
-drop policy if exists "owner can update business settings" on business_settings;
-create policy "owner can update business settings" on business_settings
+drop policy if exists "owner can update booking settings" on booking_settings;
+create policy "owner can update booking settings" on booking_settings
   for update
   using (auth.role() = 'authenticated')
   with check (auth.role() = 'authenticated');
 
--- ── business_hours (one row per weekday, 0 = Sunday) ────────────────
-create table if not exists business_hours (
+-- ── booking_hours (one row per weekday, 0 = Sunday) ─────────────────
+create table if not exists booking_hours (
   day_of_week int primary key check (day_of_week between 0 and 6),
   is_open boolean not null default false,
   start_time time not null default '09:00',
   end_time time not null default '17:00'
 );
 
-insert into business_hours (day_of_week, is_open, start_time, end_time)
+insert into booking_hours (day_of_week, is_open, start_time, end_time)
 select d, d between 1 and 6, '09:00', '17:00'
 from generate_series(0, 6) as d
-where not exists (select 1 from business_hours);
+where not exists (select 1 from booking_hours);
 
-alter table business_hours enable row level security;
+alter table booking_hours enable row level security;
 
-drop policy if exists "anyone can read business hours" on business_hours;
-create policy "anyone can read business hours" on business_hours
+drop policy if exists "anyone can read booking hours" on booking_hours;
+create policy "anyone can read booking hours" on booking_hours
   for select
   using (true);
 
-drop policy if exists "owner can update business hours" on business_hours;
-create policy "owner can update business hours" on business_hours
+drop policy if exists "owner can update booking hours" on booking_hours;
+create policy "owner can update booking hours" on booking_hours
   for update
   using (auth.role() = 'authenticated')
   with check (auth.role() = 'authenticated');
 
--- ── blocked_dates (specific days closed — holidays, days off) ───────
-create table if not exists blocked_dates (
+-- ── booking_blocked_dates (specific days closed — holidays, days off) ─
+create table if not exists booking_blocked_dates (
   id uuid primary key default gen_random_uuid(),
   date date not null unique,
   reason text,
   created_at timestamptz not null default now()
 );
 
-alter table blocked_dates enable row level security;
+alter table booking_blocked_dates enable row level security;
 
-drop policy if exists "anyone can read blocked dates" on blocked_dates;
-create policy "anyone can read blocked dates" on blocked_dates
+drop policy if exists "anyone can read blocked dates" on booking_blocked_dates;
+create policy "anyone can read blocked dates" on booking_blocked_dates
   for select
   using (true);
 
-drop policy if exists "owner can insert blocked dates" on blocked_dates;
-create policy "owner can insert blocked dates" on blocked_dates
+drop policy if exists "owner can insert blocked dates" on booking_blocked_dates;
+create policy "owner can insert blocked dates" on booking_blocked_dates
   for insert
   with check (auth.role() = 'authenticated');
 
-drop policy if exists "owner can delete blocked dates" on blocked_dates;
-create policy "owner can delete blocked dates" on blocked_dates
+drop policy if exists "owner can delete blocked dates" on booking_blocked_dates;
+create policy "owner can delete blocked dates" on booking_blocked_dates
   for delete
   using (auth.role() = 'authenticated');
 

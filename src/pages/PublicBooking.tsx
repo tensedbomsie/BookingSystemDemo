@@ -11,7 +11,7 @@ export default function PublicBooking() {
 
   useEffect(() => {
     supabase
-      .from('business_settings')
+      .from('booking_settings')
       .select('business_name, phone')
       .limit(1)
       .maybeSingle()

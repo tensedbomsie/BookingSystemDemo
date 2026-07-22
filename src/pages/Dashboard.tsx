@@ -162,8 +162,8 @@ function AvailabilityTab() {
 
   async function load() {
     const [{ data: h }, { data: b }] = await Promise.all([
-      supabase.from('business_hours').select('*').order('day_of_week'),
-      supabase.from('blocked_dates').select('*').order('date'),
+      supabase.from('booking_hours').select('*').order('day_of_week'),
+      supabase.from('booking_blocked_dates').select('*').order('date'),
     ])
     setHours(h ?? [])
     setBlocked(b ?? [])
@@ -181,20 +181,20 @@ function AvailabilityTab() {
     if (!hours) return
     setSaving(true)
     setMessage(null)
-    const { error } = await supabase.from('business_hours').upsert(hours, { onConflict: 'day_of_week' })
+    const { error } = await supabase.from('booking_hours').upsert(hours, { onConflict: 'day_of_week' })
     setSaving(false)
     setMessage(error ? error.message : 'Hours saved.')
   }
 
   async function addBlockedDate() {
     if (!newBlockedDate) return
-    await supabase.from('blocked_dates').insert({ date: newBlockedDate })
+    await supabase.from('booking_blocked_dates').insert({ date: newBlockedDate })
     setNewBlockedDate('')
     load()
   }
 
   async function removeBlockedDate(id: string) {
-    await supabase.from('blocked_dates').delete().eq('id', id)
+    await supabase.from('booking_blocked_dates').delete().eq('id', id)
     load()
   }
 
@@ -279,7 +279,7 @@ function SettingsTab() {
 
   useEffect(() => {
     supabase
-      .from('business_settings')
+      .from('booking_settings')
       .select('*')
       .limit(1)
       .maybeSingle()
@@ -299,7 +299,7 @@ function SettingsTab() {
     setSaving(true)
     setMessage(null)
     const { error } = await supabase
-      .from('business_settings')
+      .from('booking_settings')
       .update({ business_name: businessName, phone })
       .eq('id', id)
     setSaving(false)

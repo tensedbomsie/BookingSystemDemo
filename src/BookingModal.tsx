@@ -6,7 +6,7 @@ import { DAY_LABELS, MONTH_LABELS, toIsoDate, minutesToLabel, labelMinutes, gene
 /*
  * BookingModal — real appointment booking flow backed by Supabase.
  *
- * Reads `business_hours` + `blocked_dates` + the `booking_availability`
+ * Reads `booking_hours` + `booking_blocked_dates` + the `booking_availability`
  * view (public-safe: date/time only, no customer PII) to compute real
  * open slots, and inserts a real row into `bookings` on confirm.
  *
@@ -62,8 +62,8 @@ export default function BookingModal({
     if (!open || hoursByDay) return
     setLoadingBase(true)
     Promise.all([
-      supabase.from('business_hours').select('day_of_week, is_open, start_time, end_time'),
-      supabase.from('blocked_dates').select('date'),
+      supabase.from('booking_hours').select('day_of_week, is_open, start_time, end_time'),
+      supabase.from('booking_blocked_dates').select('date'),
     ])
       .then(([hoursRes, blockedRes]) => {
         if (hoursRes.error) throw hoursRes.error
