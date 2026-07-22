@@ -95,6 +95,24 @@
   }
 }
 
+@utility btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  color: var(--color-foreground);
+  border: 1.5px solid var(--color-border);
+  padding: 0.6rem 1.1rem;
+  font-weight: 600;
+  transition: border-color 150ms ease;
+
+  &:hover {
+    border-color: var(--color-primary);
+  }
+}
+
 @utility btn-ghost {
   display: inline-flex;
   align-items: center;
@@ -150,6 +168,47 @@
   color: var(--color-foreground);
   transition: background-color 120ms ease, border-color 120ms ease;
   border: 1.5px solid transparent;
+}
+
+@utility icon-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background-color: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+@utility tab-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: var(--radius-md);
+  padding: 0.55rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-muted-foreground);
+  transition: color 120ms ease, background-color 120ms ease;
+
+  &:hover {
+    color: var(--color-foreground);
+  }
+
+  &[data-active="true"] {
+    background-color: var(--color-secondary);
+    color: var(--color-secondary-foreground);
+  }
+}
+
+@utility status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 @utility field-input {

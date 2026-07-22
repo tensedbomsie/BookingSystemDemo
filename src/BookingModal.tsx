@@ -1,33 +1,24 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { X, ChevronLeft, ChevronRight, ArrowLeft, Clock, CheckCircle2, User, Phone } from 'lucide-react'
+import { supabase } from './lib/supabase'
+import { DAY_LABELS, MONTH_LABELS, toIsoDate, minutesToLabel, labelMinutes, generateSlots } from './lib/time'
 
 /*
- * BookingModal — mock appointment booking flow.
+ * BookingModal — real appointment booking flow backed by Supabase.
  *
- * UI-only: no backend, no persistence. Drop this file (plus the .cal-cell /
- * .modal-overlay / .modal-panel / .field-input / .btn-primary / .btn-ghost
- * utilities from styles.css) into any client site and it inherits that
- * site's --color-* variables automatically.
+ * Reads `business_hours` + `blocked_dates` + the `booking_availability`
+ * view (public-safe: date/time only, no customer PII) to compute real
+ * open slots, and inserts a real row into `bookings` on confirm.
  *
- * Usage:
- *   const [open, setOpen] = useState(false)
- *   <button onClick={() => setOpen(true)}>Book Now</button>
- *   <BookingModal open={open} onClose={() => setOpen(false)} businessName="Miss. D's Pet Grooming" />
+ * Drop this file (plus src/lib/time.ts, src/lib/supabase.ts, and the
+ * .cal-cell / .modal-overlay / .modal-panel / .field-input / .btn-primary /
+ * .btn-ghost utilities from styles.css) into any client site and it
+ * inherits that site's --color-* variables automatically.
  */
 
 type Step = 'calendar' | 'time' | 'form' | 'confirmed'
 
-const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const MONTH_LABELS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
-const TIME_SLOTS = ['9:00 AM', '10:00 AM', '11:00 AM', '1:00 PM', '2:00 PM', '3:00 PM', '4:30 PM']
-
-function isMockAvailable(day: number, monthIndex: number, weekday: number) {
-  if (weekday === 0) return false
-  return (day + monthIndex) % 3 !== 0
-}
+type BusinessHour = { day_of_week: number; is_open: boolean; start_time: string; end_time: string }
 
 function buildMonthGrid(year: number, monthIndex: number) {
   const firstWeekday = new Date(year, monthIndex, 1).getDay()
@@ -58,10 +49,99 @@ export default function BookingModal({
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
 
-  if (!open) return null
+  const [hoursByDay, setHoursByDay] = useState<Record<number, BusinessHour> | null>(null)
+  const [blockedDates, setBlockedDates] = useState<Set<string>>(new Set())
+  const [takenByDate, setTakenByDate] = useState<Record<string, Set<string>>>({})
+  const [loadingBase, setLoadingBase] = useState(true)
+  const [loadingMonth, setLoadingMonth] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Fetch business hours + blocked dates once when the modal first opens.
+  useEffect(() => {
+    if (!open || hoursByDay) return
+    setLoadingBase(true)
+    Promise.all([
+      supabase.from('business_hours').select('day_of_week, is_open, start_time, end_time'),
+      supabase.from('blocked_dates').select('date'),
+    ])
+      .then(([hoursRes, blockedRes]) => {
+        if (hoursRes.error) throw hoursRes.error
+        if (blockedRes.error) throw blockedRes.error
+        const map: Record<number, BusinessHour> = {}
+        for (const row of hoursRes.data ?? []) map[row.day_of_week] = row
+        setHoursByDay(map)
+        setBlockedDates(new Set((blockedRes.data ?? []).map((r) => r.date)))
+      })
+      .catch((err) => setErrorMsg(err.message ?? 'Could not load availability.'))
+      .finally(() => setLoadingBase(false))
+  }, [open, hoursByDay])
+
+  // Fetch which slots are already taken for the visible month.
+  useEffect(() => {
+    if (!open) return
+    setLoadingMonth(true)
+    const first = toIsoDate(viewYear, viewMonth, 1)
+    const last = toIsoDate(viewYear, viewMonth, new Date(viewYear, viewMonth + 1, 0).getDate())
+    ;(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('booking_availability')
+          .select('booking_date, booking_time')
+          .gte('booking_date', first)
+          .lte('booking_date', last)
+        if (error) throw error
+        const map: Record<string, Set<string>> = {}
+        for (const row of data ?? []) {
+          if (!map[row.booking_date]) map[row.booking_date] = new Set()
+          map[row.booking_date].add(row.booking_time)
+        }
+        setTakenByDate(map)
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : 'Could not load booked times.')
+      } finally {
+        setLoadingMonth(false)
+      }
+    })()
+  }, [open, viewYear, viewMonth])
 
   const cells = buildMonthGrid(viewYear, viewMonth)
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth()
+  const selectedIso = selectedDay != null ? toIsoDate(viewYear, viewMonth, selectedDay) : null
+
+  const availableSlotsForSelectedDay = useMemo(() => {
+    if (!hoursByDay || selectedDay == null || !selectedIso) return []
+    const cell = cells.find((c) => c?.day === selectedDay)
+    if (!cell) return []
+    const hours = hoursByDay[cell.weekday]
+    if (!hours?.is_open) return []
+    const takenSet = takenByDate[selectedIso] ?? new Set<string>()
+    const isToday = isCurrentMonth && selectedDay === today.getDate()
+    const nowMin = today.getHours() * 60 + today.getMinutes()
+
+    return generateSlots(hours.start_time, hours.end_time)
+      .map(minutesToLabel)
+      .filter((label) => !takenSet.has(label))
+      .filter((label) => {
+        if (!isToday) return true
+        return labelMinutes(label) > nowMin
+      })
+  }, [hoursByDay, selectedDay, selectedIso, takenByDate, cells, isCurrentMonth, today])
+
+  if (!open) return null
+
+  function isDayAvailable(day: number, weekday: number) {
+    if (!hoursByDay) return false
+    const isPast = isCurrentMonth && day < today.getDate()
+    if (isPast) return false
+    const hours = hoursByDay[weekday]
+    if (!hours?.is_open) return false
+    const iso = toIsoDate(viewYear, viewMonth, day)
+    if (blockedDates.has(iso)) return false
+    const totalSlots = generateSlots(hours.start_time, hours.end_time).length
+    const taken = takenByDate[iso]?.size ?? 0
+    return taken < totalSlots
+  }
 
   function reset() {
     setStep('calendar')
@@ -69,6 +149,7 @@ export default function BookingModal({
     setSelectedTime(null)
     setName('')
     setPhone('')
+    setErrorMsg(null)
   }
 
   function handleClose() {
@@ -94,8 +175,27 @@ export default function BookingModal({
     }
   }
 
-  const selectedDateLabel =
-    selectedDay != null ? `${MONTH_LABELS[viewMonth]} ${selectedDay}, ${viewYear}` : ''
+  async function handleConfirm(e: FormEvent) {
+    e.preventDefault()
+    if (!selectedIso || !selectedTime) return
+    setSubmitting(true)
+    setErrorMsg(null)
+    const { error } = await supabase.from('bookings').insert({
+      customer_name: name,
+      customer_phone: phone,
+      booking_date: selectedIso,
+      booking_time: selectedTime,
+      status: 'confirmed',
+    })
+    setSubmitting(false)
+    if (error) {
+      setErrorMsg(error.message)
+      return
+    }
+    setStep('confirmed')
+  }
+
+  const selectedDateLabel = selectedDay != null ? `${MONTH_LABELS[viewMonth]} ${selectedDay}, ${viewYear}` : ''
 
   return (
     <div className="modal-overlay" onClick={handleClose}>
@@ -112,6 +212,12 @@ export default function BookingModal({
         </div>
 
         <div className="p-5">
+          {errorMsg && (
+            <div className="mb-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+              {errorMsg}
+            </div>
+          )}
+
           {step === 'calendar' && (
             <>
               <div className="mb-4 flex items-center justify-between">
@@ -126,54 +232,50 @@ export default function BookingModal({
                 </button>
               </div>
 
-              <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-medium text-muted-foreground">
-                {DAY_LABELS.map((d) => (
-                  <div key={d} className="py-1">{d}</div>
-                ))}
-              </div>
-              <div className="mt-1 grid grid-cols-7 gap-1.5">
-                {cells.map((cell, i) => {
-                  if (!cell) return <div key={`blank-${i}`} />
-                  const { day, weekday } = cell
-                  const isPast = isCurrentMonth && day < today.getDate()
-                  const available = !isPast && isMockAvailable(day, viewMonth, weekday)
-                  const isSelected = selectedDay === day
+              {loadingBase || loadingMonth ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">Loading availability…</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-medium text-muted-foreground">
+                    {DAY_LABELS.map((d) => (
+                      <div key={d} className="py-1">{d}</div>
+                    ))}
+                  </div>
+                  <div className="mt-1 grid grid-cols-7 gap-1.5">
+                    {cells.map((cell, i) => {
+                      if (!cell) return <div key={`blank-${i}`} />
+                      const { day, weekday } = cell
+                      const available = isDayAvailable(day, weekday)
+                      const isSelected = selectedDay === day
 
-                  return (
-                    <button
-                      key={day}
-                      disabled={!available}
-                      onClick={() => {
-                        setSelectedDay(day)
-                        setStep('time')
-                      }}
-                      className="cal-cell"
-                      style={{
-                        backgroundColor: isSelected
-                          ? 'transparent'
-                          : available
-                            ? 'var(--color-secondary)'
-                            : 'transparent',
-                        borderColor: isSelected ? 'var(--color-primary)' : 'transparent',
-                        color: available ? 'var(--color-foreground)' : 'var(--color-muted-foreground)',
-                        opacity: available ? 1 : 0.4,
-                        cursor: available ? 'pointer' : 'not-allowed',
-                      }}
-                    >
-                      <span>{day}</span>
-                      {available && (
-                        <span
-                          className="h-1 w-1 rounded-full"
-                          style={{ backgroundColor: 'var(--color-primary)' }}
-                        />
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-              <p className="mt-4 text-center text-xs text-muted-foreground">
-                Highlighted days have open appointment times.
-              </p>
+                      return (
+                        <button
+                          key={day}
+                          disabled={!available}
+                          onClick={() => {
+                            setSelectedDay(day)
+                            setStep('time')
+                          }}
+                          className="cal-cell"
+                          style={{
+                            backgroundColor: isSelected ? 'transparent' : available ? 'var(--color-secondary)' : 'transparent',
+                            borderColor: isSelected ? 'var(--color-primary)' : 'transparent',
+                            color: available ? 'var(--color-foreground)' : 'var(--color-muted-foreground)',
+                            opacity: available ? 1 : 0.4,
+                            cursor: available ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          <span>{day}</span>
+                          {available && <span className="h-1 w-1 rounded-full" style={{ backgroundColor: 'var(--color-primary)' }} />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-4 text-center text-xs text-muted-foreground">
+                    Highlighted days have open appointment times.
+                  </p>
+                </>
+              )}
             </>
           )}
 
@@ -185,21 +287,25 @@ export default function BookingModal({
               </button>
               <p className="text-sm text-muted-foreground">Available times for</p>
               <p className="mb-4 font-semibold text-foreground">{selectedDateLabel}</p>
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-                {TIME_SLOTS.map((time) => (
-                  <button
-                    key={time}
-                    onClick={() => {
-                      setSelectedTime(time)
-                      setStep('form')
-                    }}
-                    className="flex items-center justify-center gap-1.5 rounded-md border border-border py-2.5 text-sm font-medium text-foreground transition-colors hover:border-primary"
-                  >
-                    <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                    {time}
-                  </button>
-                ))}
-              </div>
+              {availableSlotsForSelectedDay.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">No times left for this day.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                  {availableSlotsForSelectedDay.map((time) => (
+                    <button
+                      key={time}
+                      onClick={() => {
+                        setSelectedTime(time)
+                        setStep('form')
+                      }}
+                      className="flex items-center justify-center gap-1.5 rounded-md border border-border py-2.5 text-sm font-medium text-foreground transition-colors hover:border-primary"
+                    >
+                      <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                      {time}
+                    </button>
+                  ))}
+                </div>
+              )}
             </>
           )}
 
@@ -213,13 +319,7 @@ export default function BookingModal({
               <p className="mb-4 font-semibold text-foreground">
                 {selectedDateLabel} at {selectedTime}
               </p>
-              <form
-                className="space-y-3"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  setStep('confirmed')
-                }}
-              >
+              <form className="space-y-3" onSubmit={handleConfirm}>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">Full name</label>
                   <div className="relative">
@@ -247,8 +347,8 @@ export default function BookingModal({
                     />
                   </div>
                 </div>
-                <button type="submit" className="btn-primary mt-2 w-full">
-                  Confirm Booking
+                <button type="submit" disabled={submitting} className="btn-primary mt-2 w-full">
+                  {submitting ? 'Booking…' : 'Confirm Booking'}
                 </button>
               </form>
             </>
