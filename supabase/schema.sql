@@ -17,8 +17,12 @@ create table if not exists booking_settings (
   id uuid primary key default gen_random_uuid(),
   business_name text not null default 'Sample Business',
   phone text,
+  venmo_handle text,
   created_at timestamptz not null default now()
 );
+
+-- Safe to re-run on a database created before this column existed.
+alter table booking_settings add column if not exists venmo_handle text;
 
 insert into booking_settings (business_name, phone)
 select 'Sample Business', '(555) 123-4567'
@@ -104,8 +108,14 @@ create table if not exists bookings (
   booking_date date not null,
   booking_time text not null,
   status text not null default 'confirmed' check (status in ('confirmed', 'completed', 'cancelled')),
+  price numeric(10, 2),
+  invoice_sent_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+-- Safe to re-run on a database created before these columns existed.
+alter table bookings add column if not exists price numeric(10, 2);
+alter table bookings add column if not exists invoice_sent_at timestamptz;
 
 alter table bookings enable row level security;
 

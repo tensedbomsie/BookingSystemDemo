@@ -13,6 +13,13 @@ type Booking = {
   booking_date: string
   booking_time: string
   status: string
+  price: number | null
+  invoice_sent_at: string | null
+}
+
+type BookingSettings = {
+  business_name: string
+  venmo_handle: string | null
 }
 
 type BusinessHour = { day_of_week: number; is_open: boolean; start_time: string; end_time: string }
@@ -92,10 +99,15 @@ export default function Dashboard() {
 
 function BookingsTab() {
   const [bookings, setBookings] = useState<Booking[] | null>(null)
+  const [settings, setSettings] = useState<BookingSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [invoiceTarget, setInvoiceTarget] = useState<Booking | null>(null)
 
   async function load() {
-    const { data, error } = await supabase.from('bookings').select('*')
+    const [{ data, error }, { data: settingsData }] = await Promise.all([
+      supabase.from('bookings').select('*'),
+      supabase.from('booking_settings').select('business_name, venmo_handle').limit(1).maybeSingle(),
+    ])
     if (error) {
       setError(error.message)
       return
@@ -105,6 +117,7 @@ function BookingsTab() {
       return labelMinutes(a.booking_time) - labelMinutes(b.booking_time)
     })
     setBookings(sorted)
+    setSettings(settingsData ?? null)
   }
 
   useEffect(() => {
@@ -131,6 +144,11 @@ function BookingsTab() {
             <p className="text-sm text-muted-foreground">
               {b.customer_name} · {b.customer_phone}
             </p>
+            {b.status === 'completed' && b.price != null && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                ${b.price.toFixed(2)} · {b.invoice_sent_at ? 'invoice sent' : 'invoice not sent yet'}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <span className="status-pill" style={statusStyle(b.status)}>
@@ -138,7 +156,7 @@ function BookingsTab() {
             </span>
             {b.status === 'confirmed' && (
               <>
-                <button onClick={() => updateStatus(b.id, 'completed')} className="btn-ghost text-xs">
+                <button onClick={() => setInvoiceTarget(b)} className="btn-ghost text-xs">
                   Mark Completed
                 </button>
                 <button onClick={() => updateStatus(b.id, 'cancelled')} className="btn-ghost text-xs">
@@ -146,9 +164,98 @@ function BookingsTab() {
                 </button>
               </>
             )}
+            {b.status === 'completed' && !b.invoice_sent_at && (
+              <button onClick={() => setInvoiceTarget(b)} className="btn-ghost text-xs">
+                Send Invoice
+              </button>
+            )}
           </div>
         </div>
       ))}
+
+      {invoiceTarget && (
+        <InvoiceModal
+          booking={invoiceTarget}
+          settings={settings}
+          onClose={() => setInvoiceTarget(null)}
+          onDone={() => {
+            setInvoiceTarget(null)
+            load()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function InvoiceModal({
+  booking,
+  settings,
+  onClose,
+  onDone,
+}: {
+  booking: Booking
+  settings: BookingSettings | null
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [price, setPrice] = useState(booking.price != null ? String(booking.price) : '')
+  const [saving, setSaving] = useState(false)
+
+  const amount = Number(price)
+  const venmoLink =
+    settings?.venmo_handle && amount > 0
+      ? `https://venmo.com/${settings.venmo_handle.replace(/^@/, '')}?txn=charge&amount=${amount.toFixed(2)}&note=${encodeURIComponent(
+          `${settings.business_name} — thanks for booking!`,
+        )}`
+      : null
+
+  const message = `Hi ${booking.customer_name}! Thanks for booking with ${settings?.business_name ?? 'us'} 🐾 Your total today is $${
+    amount > 0 ? amount.toFixed(2) : '__'
+  }.${venmoLink ? ` You can pay here: ${venmoLink}` : ''}`
+
+  async function sendInvoice() {
+    if (!amount || amount <= 0) return
+    setSaving(true)
+    await supabase
+      .from('bookings')
+      .update({ status: 'completed', price: amount, invoice_sent_at: new Date().toISOString() })
+      .eq('id', booking.id)
+    setSaving(false)
+    window.location.href = `sms:${booking.customer_phone}?body=${encodeURIComponent(message)}`
+    onDone()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-panel p-5" onClick={(e) => e.stopPropagation()}>
+        <h2 className="mb-3 font-semibold text-foreground">Send Invoice — {booking.customer_name}</h2>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">Amount ($)</label>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          className="field-input mb-3"
+          placeholder="65.00"
+          autoFocus
+        />
+        <p className="mb-4 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">{message}</p>
+        {!settings?.venmo_handle && (
+          <p className="mb-3 text-xs text-amber-400">
+            No Venmo handle set — add one in Settings to include a payment link automatically.
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="btn-ghost text-xs" disabled={saving}>
+            Cancel
+          </button>
+          <button onClick={sendInvoice} className="btn-primary text-xs" disabled={saving || !amount}>
+            {saving ? 'Sending…' : 'Mark Completed & Text Invoice'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -273,6 +380,7 @@ function SettingsTab() {
   const [id, setId] = useState<string | null>(null)
   const [businessName, setBusinessName] = useState('')
   const [phone, setPhone] = useState('')
+  const [venmoHandle, setVenmoHandle] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -288,6 +396,7 @@ function SettingsTab() {
           setId(data.id)
           setBusinessName(data.business_name)
           setPhone(data.phone ?? '')
+          setVenmoHandle(data.venmo_handle ?? '')
         }
         setLoading(false)
       })
@@ -300,7 +409,7 @@ function SettingsTab() {
     setMessage(null)
     const { error } = await supabase
       .from('booking_settings')
-      .update({ business_name: businessName, phone })
+      .update({ business_name: businessName, phone, venmo_handle: venmoHandle || null })
       .eq('id', id)
     setSaving(false)
     setMessage(error ? error.message : 'Saved.')
@@ -317,6 +426,15 @@ function SettingsTab() {
       <div>
         <label className="mb-1 block text-xs font-medium text-muted-foreground">Phone</label>
         <input value={phone} onChange={(e) => setPhone(e.target.value)} className="field-input" />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">Venmo Handle (for invoices)</label>
+        <input
+          value={venmoHandle}
+          onChange={(e) => setVenmoHandle(e.target.value)}
+          className="field-input"
+          placeholder="@your-venmo-name"
+        />
       </div>
       <button type="submit" disabled={saving} className="btn-primary">
         {saving ? 'Saving…' : 'Save Settings'}
