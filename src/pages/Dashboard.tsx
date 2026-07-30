@@ -131,10 +131,40 @@ function BookingsTab() {
 
   if (error) return <p className="text-sm text-red-400">{error}</p>
   if (!bookings) return <p className="text-sm text-muted-foreground">Loading bookings…</p>
+
+  const now = new Date()
+  const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const monthRevenue = bookings
+    .filter((b) => b.status === 'completed' && b.booking_date.startsWith(monthPrefix) && b.price != null)
+    .reduce((sum, b) => sum + (b.price ?? 0), 0)
+  const upcomingCount = bookings.filter((b) => b.status === 'confirmed').length
+  const completedCount = bookings.filter((b) => b.status === 'completed').length
+  const unpaidCount = bookings.filter((b) => b.status === 'completed' && !b.invoice_sent_at).length
+
   if (bookings.length === 0) return <p className="text-sm text-muted-foreground">No bookings yet.</p>
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Revenue This Month</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">${monthRevenue.toFixed(2)}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Upcoming Bookings</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">{upcomingCount}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Completed</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">{completedCount}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Unpaid Invoices</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">{unpaidCount}</p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
       {bookings.map((b) => (
         <div key={b.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-4">
           <div>
@@ -172,6 +202,7 @@ function BookingsTab() {
           </div>
         </div>
       ))}
+      </div>
 
       {invoiceTarget && (
         <InvoiceModal
