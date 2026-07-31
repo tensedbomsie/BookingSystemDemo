@@ -15,6 +15,22 @@ type Booking = {
   status: string
   price: number | null
   invoice_sent_at: string | null
+  created_at: string
+}
+
+function buildVisitCounts(bookings: Booking[]): Map<string, { visitNumber: number; totalVisits: number }> {
+  const byPhone = new Map<string, Booking[]>()
+  for (const b of bookings) {
+    const list = byPhone.get(b.customer_phone) ?? []
+    list.push(b)
+    byPhone.set(b.customer_phone, list)
+  }
+  const result = new Map<string, { visitNumber: number; totalVisits: number }>()
+  for (const list of byPhone.values()) {
+    const sorted = [...list].sort((a, b) => a.created_at.localeCompare(b.created_at))
+    sorted.forEach((b, i) => result.set(b.id, { visitNumber: i + 1, totalVisits: sorted.length }))
+  }
+  return result
 }
 
 type BookingSettings = {
@@ -140,6 +156,7 @@ function BookingsTab() {
   const upcomingCount = bookings.filter((b) => b.status === 'confirmed').length
   const completedCount = bookings.filter((b) => b.status === 'completed').length
   const unpaidCount = bookings.filter((b) => b.status === 'completed' && !b.invoice_sent_at).length
+  const visitCounts = buildVisitCounts(bookings)
 
   if (bookings.length === 0) return <p className="text-sm text-muted-foreground">No bookings yet.</p>
 
@@ -174,6 +191,11 @@ function BookingsTab() {
             <p className="text-sm text-muted-foreground">
               {b.customer_name} · {b.customer_phone}
             </p>
+            {(visitCounts.get(b.id)?.totalVisits ?? 1) > 1 && (
+              <p className="mt-1 text-xs text-emerald-400">
+                🔁 ลูกค้าประจำ (ครั้งที่ {visitCounts.get(b.id)?.visitNumber})
+              </p>
+            )}
             {b.status === 'completed' && b.price != null && (
               <p className="mt-1 text-xs text-muted-foreground">
                 ${b.price.toFixed(2)} · {b.invoice_sent_at ? 'invoice sent' : 'invoice not sent yet'}
