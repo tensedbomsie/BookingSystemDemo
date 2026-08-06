@@ -36,6 +36,8 @@ function buildVisitCounts(bookings: Booking[]): Map<string, { visitNumber: numbe
 type BookingSettings = {
   business_name: string
   venmo_handle: string | null
+  zelle_handle: string | null
+  cashapp_handle: string | null
 }
 
 type BusinessHour = { day_of_week: number; is_open: boolean; start_time: string; end_time: string }
@@ -122,7 +124,11 @@ function BookingsTab() {
   async function load() {
     const [{ data, error }, { data: settingsData }] = await Promise.all([
       supabase.from('bookings').select('*'),
-      supabase.from('booking_settings').select('business_name, venmo_handle').limit(1).maybeSingle(),
+      supabase
+        .from('booking_settings')
+        .select('business_name, venmo_handle, zelle_handle, cashapp_handle')
+        .limit(1)
+        .maybeSingle(),
     ])
     if (error) {
       setError(error.message)
@@ -156,6 +162,11 @@ function BookingsTab() {
   const upcomingCount = bookings.filter((b) => b.status === 'confirmed').length
   const completedCount = bookings.filter((b) => b.status === 'completed').length
   const unpaidCount = bookings.filter((b) => b.status === 'completed' && !b.invoice_sent_at).length
+  const collectedTotal = bookings
+    .filter((b) => b.invoice_sent_at != null && b.price != null)
+    .reduce((sum, b) => sum + (b.price ?? 0), 0)
+  const outstandingBookings = bookings.filter((b) => b.status === 'completed' && b.price != null && !b.invoice_sent_at)
+  const outstandingTotal = outstandingBookings.reduce((sum, b) => sum + (b.price ?? 0), 0)
   const visitCounts = buildVisitCounts(bookings)
 
   if (bookings.length === 0) return <p className="text-sm text-muted-foreground">No bookings yet.</p>
@@ -178,6 +189,24 @@ function BookingsTab() {
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="text-xs text-muted-foreground">Unpaid Invoices</p>
           <p className="mt-1 text-xl font-semibold text-foreground">{unpaidCount}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Collected</p>
+          <p className="mt-1 text-xl font-semibold text-emerald-400">${collectedTotal.toFixed(2)}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">All-time, across invoices</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Outstanding</p>
+          <p className="mt-1 text-xl font-semibold text-red-400">${outstandingTotal.toFixed(2)}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">Still owed to you</p>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <p className="text-xs text-muted-foreground">Needs Attention</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">{outstandingBookings.length}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">Completed jobs, no invoice sent yet</p>
         </div>
       </div>
 
@@ -262,10 +291,20 @@ function InvoiceModal({
           `${settings.business_name} — thanks for booking!`,
         )}`
       : null
+  const cashAppLink =
+    settings?.cashapp_handle && amount > 0
+      ? `https://cash.app/${settings.cashapp_handle.replace(/^\$/, '$')}/${amount.toFixed(2)}`
+      : null
+
+  const paymentLines: string[] = []
+  if (venmoLink) paymentLines.push(`Venmo: ${venmoLink}`)
+  if (cashAppLink) paymentLines.push(`Cash App: ${cashAppLink}`)
+  if (settings?.zelle_handle) paymentLines.push(`Zelle: ${settings.zelle_handle}`)
+  const hasAnyPaymentMethod = paymentLines.length > 0
 
   const message = `Hi ${booking.customer_name}! Thanks for booking with ${settings?.business_name ?? 'us'} 🐾 Your total today is $${
     amount > 0 ? amount.toFixed(2) : '__'
-  }.${venmoLink ? ` You can pay here: ${venmoLink}` : ''}`
+  }.${hasAnyPaymentMethod ? ` You can pay via ${paymentLines.join(' or ')}` : ''}`
 
   async function sendInvoice() {
     if (!amount || amount <= 0) return
@@ -295,9 +334,9 @@ function InvoiceModal({
           autoFocus
         />
         <p className="mb-4 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">{message}</p>
-        {!settings?.venmo_handle && (
+        {!hasAnyPaymentMethod && (
           <p className="mb-3 text-xs text-amber-400">
-            No Venmo handle set — add one in Settings to include a payment link automatically.
+            No payment method set — add Venmo, Cash App, or Zelle in Settings to include a payment link automatically.
           </p>
         )}
         <div className="flex justify-end gap-2">
@@ -434,6 +473,8 @@ function SettingsTab() {
   const [businessName, setBusinessName] = useState('')
   const [phone, setPhone] = useState('')
   const [venmoHandle, setVenmoHandle] = useState('')
+  const [zelleHandle, setZelleHandle] = useState('')
+  const [cashappHandle, setCashappHandle] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -450,6 +491,8 @@ function SettingsTab() {
           setBusinessName(data.business_name)
           setPhone(data.phone ?? '')
           setVenmoHandle(data.venmo_handle ?? '')
+          setZelleHandle(data.zelle_handle ?? '')
+          setCashappHandle(data.cashapp_handle ?? '')
         }
         setLoading(false)
       })
@@ -462,7 +505,13 @@ function SettingsTab() {
     setMessage(null)
     const { error } = await supabase
       .from('booking_settings')
-      .update({ business_name: businessName, phone, venmo_handle: venmoHandle || null })
+      .update({
+        business_name: businessName,
+        phone,
+        venmo_handle: venmoHandle || null,
+        zelle_handle: zelleHandle || null,
+        cashapp_handle: cashappHandle || null,
+      })
       .eq('id', id)
     setSaving(false)
     setMessage(error ? error.message : 'Saved.')
@@ -489,6 +538,27 @@ function SettingsTab() {
           placeholder="@your-venmo-name"
         />
       </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">Cash App $Cashtag (for invoices)</label>
+        <input
+          value={cashappHandle}
+          onChange={(e) => setCashappHandle(e.target.value)}
+          className="field-input"
+          placeholder="$your-cashtag"
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">Zelle (email or phone, for invoices)</label>
+        <input
+          value={zelleHandle}
+          onChange={(e) => setZelleHandle(e.target.value)}
+          className="field-input"
+          placeholder="you@example.com"
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Add any combination — customers will see whichever payment methods you've set up when you send an invoice.
+      </p>
       <button type="submit" disabled={saving} className="btn-primary">
         {saving ? 'Saving…' : 'Save Settings'}
       </button>

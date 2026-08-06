@@ -18,11 +18,15 @@ create table if not exists booking_settings (
   business_name text not null default 'Sample Business',
   phone text,
   venmo_handle text,
+  zelle_handle text,
+  cashapp_handle text,
   created_at timestamptz not null default now()
 );
 
--- Safe to re-run on a database created before this column existed.
+-- Safe to re-run on a database created before these columns existed.
 alter table booking_settings add column if not exists venmo_handle text;
+alter table booking_settings add column if not exists zelle_handle text;
+alter table booking_settings add column if not exists cashapp_handle text;
 
 insert into booking_settings (business_name, phone)
 select 'Sample Business', '(555) 123-4567'
