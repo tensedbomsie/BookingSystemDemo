@@ -28,6 +28,13 @@ alter table booking_settings add column if not exists venmo_handle text;
 alter table booking_settings add column if not exists zelle_handle text;
 alter table booking_settings add column if not exists cashapp_handle text;
 
+-- Pay-at-booking (Stripe Checkout). stripe_publishable_key is safe to expose
+-- publicly (that's what publishable keys are for) — the SECRET key is never
+-- stored here, it lives only as a Supabase Edge Function secret
+-- (`supabase secrets set STRIPE_SECRET_KEY=...`), read server-side only.
+alter table booking_settings add column if not exists stripe_publishable_key text;
+alter table booking_settings add column if not exists default_price numeric(10, 2);
+
 insert into booking_settings (business_name, phone)
 select 'Sample Business', '(555) 123-4567'
 where not exists (select 1 from booking_settings);
@@ -120,6 +127,14 @@ create table if not exists bookings (
 -- Safe to re-run on a database created before these columns existed.
 alter table bookings add column if not exists price numeric(10, 2);
 alter table bookings add column if not exists invoice_sent_at timestamptz;
+
+-- Pay-at-booking: a booking that requires upfront payment sits in
+-- 'pending_payment' until the Stripe webhook confirms it, then flips to
+-- 'paid'. Bookings that don't require payment (owner hasn't set a Stripe
+-- key) skip straight to 'not_required'.
+alter table bookings add column if not exists payment_status text not null default 'not_required'
+  check (payment_status in ('not_required', 'pending_payment', 'paid'));
+alter table bookings add column if not exists stripe_checkout_session_id text;
 
 alter table bookings enable row level security;
 

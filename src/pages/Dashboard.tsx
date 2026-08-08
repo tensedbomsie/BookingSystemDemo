@@ -475,6 +475,7 @@ function SettingsTab() {
   const [venmoHandle, setVenmoHandle] = useState('')
   const [zelleHandle, setZelleHandle] = useState('')
   const [cashappHandle, setCashappHandle] = useState('')
+  const [defaultPrice, setDefaultPrice] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -493,6 +494,7 @@ function SettingsTab() {
           setVenmoHandle(data.venmo_handle ?? '')
           setZelleHandle(data.zelle_handle ?? '')
           setCashappHandle(data.cashapp_handle ?? '')
+          setDefaultPrice(data.default_price != null ? String(data.default_price) : '')
         }
         setLoading(false)
       })
@@ -511,6 +513,7 @@ function SettingsTab() {
         venmo_handle: venmoHandle || null,
         zelle_handle: zelleHandle || null,
         cashapp_handle: cashappHandle || null,
+        default_price: defaultPrice ? Number(defaultPrice) : null,
       })
       .eq('id', id)
     setSaving(false)
@@ -559,6 +562,26 @@ function SettingsTab() {
       <p className="text-xs text-muted-foreground">
         Add any combination — customers will see whichever payment methods you've set up when you send an invoice.
       </p>
+
+      <div className="border-t border-border pt-3">
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">
+          Charge at booking (Stripe) — service price
+        </label>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={defaultPrice}
+          onChange={(e) => setDefaultPrice(e.target.value)}
+          className="field-input"
+          placeholder="e.g. 75.00"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Set a price to require card payment at the moment of booking, before the slot is confirmed. Leave blank to
+          keep booking free (invoice after, like today). Requires a Stripe account connected on the backend.
+        </p>
+      </div>
+
       <button type="submit" disabled={saving} className="btn-primary">
         {saving ? 'Saving…' : 'Save Settings'}
       </button>
