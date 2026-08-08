@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const { bookingId } = await req.json()
+    const { bookingId, amount } = await req.json()
     if (!bookingId) {
       return new Response(JSON.stringify({ error: 'bookingId is required' }), {
         status: 400,
@@ -36,11 +36,11 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Look up the booking + the business's price/name server-side — never
-    // trust an amount passed in from the client.
+    // Look up the booking server-side — never trust a price the client
+    // computed on its own.
     const { data: booking, error: bookingErr } = await supabaseAdmin
       .from('bookings')
-      .select('id, customer_name, booking_date, booking_time, payment_status')
+      .select('id, customer_name, booking_date, booking_time, payment_status, price')
       .eq('id', bookingId)
       .single()
     if (bookingErr || !booking) throw new Error('Booking not found')
@@ -57,8 +57,17 @@ Deno.serve(async (req) => {
       .limit(1)
       .maybeSingle()
     if (settingsErr) throw settingsErr
-    if (!settings?.default_price || settings.default_price <= 0) {
-      throw new Error('No service price configured — set it in Settings first.')
+
+    // Prefer an explicit amount (owner assessed the job and is requesting
+    // payment for this specific booking), falling back to the booking's
+    // already-stored price, then a flat default_price if the business set
+    // one. At least one of these must resolve to a positive number.
+    const resolvedAmount = Number(amount ?? booking.price ?? settings?.default_price ?? 0)
+    if (!resolvedAmount || resolvedAmount <= 0) {
+      throw new Error('No price given — set an amount before requesting payment.')
+    }
+    if (resolvedAmount < 0.5) {
+      throw new Error('Stripe requires a minimum charge of $0.50.')
     }
 
     const origin = req.headers.get('origin') ?? Deno.env.get('SITE_URL') ?? ''
@@ -70,9 +79,9 @@ Deno.serve(async (req) => {
         {
           price_data: {
             currency: 'usd',
-            unit_amount: Math.round(settings.default_price * 100),
+            unit_amount: Math.round(resolvedAmount * 100),
             product_data: {
-              name: `${settings.business_name} — Appointment (${booking.booking_date} ${booking.booking_time})`,
+              name: `${settings?.business_name ?? 'Appointment'} — ${booking.booking_date} ${booking.booking_time}`,
             },
           },
           quantity: 1,

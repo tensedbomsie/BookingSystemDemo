@@ -56,7 +56,6 @@ export default function BookingModal({
   const [loadingMonth, setLoadingMonth] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [servicePrice, setServicePrice] = useState<number | null>(null)
 
   // Fetch business hours + blocked dates once when the modal first opens.
   useEffect(() => {
@@ -65,16 +64,14 @@ export default function BookingModal({
     Promise.all([
       supabase.from('booking_hours').select('day_of_week, is_open, start_time, end_time'),
       supabase.from('booking_blocked_dates').select('date'),
-      supabase.from('booking_settings').select('default_price').limit(1).maybeSingle(),
     ])
-      .then(([hoursRes, blockedRes, settingsRes]) => {
+      .then(([hoursRes, blockedRes]) => {
         if (hoursRes.error) throw hoursRes.error
         if (blockedRes.error) throw blockedRes.error
         const map: Record<number, BusinessHour> = {}
         for (const row of hoursRes.data ?? []) map[row.day_of_week] = row
         setHoursByDay(map)
         setBlockedDates(new Set((blockedRes.data ?? []).map((r) => r.date)))
-        setServicePrice(settingsRes.data?.default_price ?? null)
       })
       .catch((err) => setErrorMsg(err.message ?? 'Could not load availability.'))
       .finally(() => setLoadingBase(false))
@@ -184,45 +181,24 @@ export default function BookingModal({
     setSubmitting(true)
     setErrorMsg(null)
 
-    const requiresPayment = !!servicePrice && servicePrice > 0
-
-    const { data, error } = await supabase
-      .from('bookings')
-      .insert({
-        customer_name: name,
-        customer_phone: phone,
-        booking_date: selectedIso,
-        booking_time: selectedTime,
-        status: 'confirmed',
-        payment_status: requiresPayment ? 'pending_payment' : 'not_required',
-      })
-      .select('id')
-      .single()
-
-    if (error || !data) {
-      setSubmitting(false)
-      setErrorMsg(error?.message ?? 'Could not create booking.')
-      return
-    }
-
-    if (!requiresPayment) {
-      setSubmitting(false)
-      setStep('confirmed')
-      return
-    }
-
-    // Payment required — hand off to Stripe Checkout. The booking already
-    // holds the slot (status='confirmed'), so nobody else can grab it while
-    // the customer is on Stripe's page.
-    const { data: fn, error: fnError } = await supabase.functions.invoke('create-checkout-session', {
-      body: { bookingId: data.id },
+    // Booking is always free/instant at this step — jobs that need an
+    // upfront price (most service businesses have to see the scope first)
+    // get a Stripe payment link sent by the owner afterward, from the
+    // Dashboard's "Request Payment" action, not forced here at a flat rate.
+    const { error } = await supabase.from('bookings').insert({
+      customer_name: name,
+      customer_phone: phone,
+      booking_date: selectedIso,
+      booking_time: selectedTime,
+      status: 'confirmed',
+      payment_status: 'not_required',
     })
     setSubmitting(false)
-    if (fnError || !fn?.url) {
-      setErrorMsg(fnError?.message ?? 'Could not start checkout. Please try again.')
+    if (error) {
+      setErrorMsg(error.message)
       return
     }
-    window.location.href = fn.url
+    setStep('confirmed')
   }
 
   const selectedDateLabel = selectedDay != null ? `${MONTH_LABELS[viewMonth]} ${selectedDay}, ${viewYear}` : ''

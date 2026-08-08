@@ -16,6 +16,7 @@ type Booking = {
   price: number | null
   invoice_sent_at: string | null
   created_at: string
+  payment_status: 'not_required' | 'pending_payment' | 'paid'
 }
 
 function buildVisitCounts(bookings: Booking[]): Map<string, { visitNumber: number; totalVisits: number }> {
@@ -120,6 +121,7 @@ function BookingsTab() {
   const [settings, setSettings] = useState<BookingSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [invoiceTarget, setInvoiceTarget] = useState<Booking | null>(null)
+  const [paymentRequestTarget, setPaymentRequestTarget] = useState<Booking | null>(null)
 
   async function load() {
     const [{ data, error }, { data: settingsData }] = await Promise.all([
@@ -230,6 +232,12 @@ function BookingsTab() {
                 ${b.price.toFixed(2)} · {b.invoice_sent_at ? 'invoice sent' : 'invoice not sent yet'}
               </p>
             )}
+            {b.payment_status === 'paid' && (
+              <p className="mt-1 text-xs font-medium text-emerald-400">✓ Paid via Stripe{b.price != null ? ` — $${b.price.toFixed(2)}` : ''}</p>
+            )}
+            {b.payment_status === 'pending_payment' && (
+              <p className="mt-1 text-xs text-amber-400">Payment link sent{b.price != null ? ` — $${b.price.toFixed(2)}` : ''} · not paid yet</p>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <span className="status-pill" style={statusStyle(b.status)}>
@@ -237,6 +245,11 @@ function BookingsTab() {
             </span>
             {b.status === 'confirmed' && (
               <>
+                {b.payment_status === 'not_required' && (
+                  <button onClick={() => setPaymentRequestTarget(b)} className="btn-ghost text-xs">
+                    Request Payment
+                  </button>
+                )}
                 <button onClick={() => setInvoiceTarget(b)} className="btn-ghost text-xs">
                   Mark Completed
                 </button>
@@ -262,6 +275,18 @@ function BookingsTab() {
           onClose={() => setInvoiceTarget(null)}
           onDone={() => {
             setInvoiceTarget(null)
+            load()
+          }}
+        />
+      )}
+
+      {paymentRequestTarget && (
+        <RequestPaymentModal
+          booking={paymentRequestTarget}
+          settings={settings}
+          onClose={() => setPaymentRequestTarget(null)}
+          onDone={() => {
+            setPaymentRequestTarget(null)
             load()
           }}
         />
@@ -345,6 +370,89 @@ function InvoiceModal({
           </button>
           <button onClick={sendInvoice} className="btn-primary text-xs" disabled={saving || !amount}>
             {saving ? 'Sending…' : 'Mark Completed & Text Invoice'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RequestPaymentModal({
+  booking,
+  settings,
+  onClose,
+  onDone,
+}: {
+  booking: Booking
+  settings: BookingSettings | null
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [price, setPrice] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const amount = Number(price)
+
+  async function send() {
+    if (!amount || amount <= 0) return
+    setSending(true)
+    setError(null)
+
+    // Hold the price + mark pending so the dashboard reflects "sent, not yet
+    // paid" even before the customer opens the link.
+    const { error: updateErr } = await supabase
+      .from('bookings')
+      .update({ price: amount, payment_status: 'pending_payment' })
+      .eq('id', booking.id)
+    if (updateErr) {
+      setSending(false)
+      setError(updateErr.message)
+      return
+    }
+
+    const { data: fn, error: fnError } = await supabase.functions.invoke('create-checkout-session', {
+      body: { bookingId: booking.id, amount },
+    })
+    setSending(false)
+    if (fnError || !fn?.url) {
+      setError(fnError?.message ?? 'Could not create payment link.')
+      return
+    }
+
+    const message = `Hi ${booking.customer_name}! To confirm your appointment with ${
+      settings?.business_name ?? 'us'
+    } on ${booking.booking_date} at ${booking.booking_time}, please pay $${amount.toFixed(2)} before the appointment: ${fn.url}`
+    window.location.href = `sms:${booking.customer_phone}?body=${encodeURIComponent(message)}`
+    onDone()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-panel p-5" onClick={(e) => e.stopPropagation()}>
+        <h2 className="mb-1 font-semibold text-foreground">Request Payment — {booking.customer_name}</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Set the price based on the actual job (assess scope first) — this texts a real Stripe payment link the
+          customer pays before the appointment. The slot stays booked either way.
+        </p>
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">Amount ($)</label>
+        <input
+          type="number"
+          min="0.50"
+          step="0.01"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          className="field-input mb-3"
+          placeholder="65.00"
+          autoFocus
+        />
+        {error && <p className="mb-3 text-xs text-red-400">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="btn-ghost text-xs" disabled={sending}>
+            Cancel
+          </button>
+          <button onClick={send} className="btn-primary text-xs" disabled={sending || !amount}>
+            {sending ? 'Creating link…' : 'Text Payment Link'}
           </button>
         </div>
       </div>
@@ -565,7 +673,7 @@ function SettingsTab() {
 
       <div className="border-t border-border pt-3">
         <label className="mb-1 block text-xs font-medium text-muted-foreground">
-          Charge at booking (Stripe) — service price
+          Default price (optional fallback)
         </label>
         <input
           type="number"
@@ -577,8 +685,10 @@ function SettingsTab() {
           placeholder="e.g. 75.00"
         />
         <p className="mt-1 text-xs text-muted-foreground">
-          Set a price to require card payment at the moment of booking, before the slot is confirmed. Leave blank to
-          keep booking free (invoice after, like today). Requires a Stripe account connected on the backend.
+          Bookings stay free/instant regardless — most jobs need scope assessed first, so pricing happens per booking
+          from the Bookings tab ("Request Payment"), where you set the real amount and text a Stripe payment link
+          the customer pays before the appointment. This field only applies if you request payment without typing an
+          amount. Requires a Stripe account connected on the backend.
         </p>
       </div>
 
