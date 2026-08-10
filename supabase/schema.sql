@@ -35,6 +35,15 @@ alter table booking_settings add column if not exists cashapp_handle text;
 alter table booking_settings add column if not exists stripe_publishable_key text;
 alter table booking_settings add column if not exists default_price numeric(10, 2);
 
+-- Stripe Connect (Standard account owned by the business, not us). The
+-- connected account id (acct_...) and the enabled flag are not secrets —
+-- same sensitivity as a publishable key, safe under the existing public-read
+-- policy. Money for Checkout Sessions created with this account id goes
+-- straight to the business's own bank account; our platform key is only
+-- used to call the Stripe API on their behalf, never touches the funds.
+alter table booking_settings add column if not exists stripe_connected_account_id text;
+alter table booking_settings add column if not exists stripe_charges_enabled boolean not null default false;
+
 insert into booking_settings (business_name, phone)
 select 'Sample Business', '(555) 123-4567'
 where not exists (select 1 from booking_settings);

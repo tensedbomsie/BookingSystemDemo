@@ -53,10 +53,13 @@ Deno.serve(async (req) => {
 
     const { data: settings, error: settingsErr } = await supabaseAdmin
       .from('booking_settings')
-      .select('business_name, default_price')
+      .select('business_name, default_price, stripe_connected_account_id, stripe_charges_enabled')
       .limit(1)
       .maybeSingle()
     if (settingsErr) throw settingsErr
+    if (!settings?.stripe_connected_account_id || !settings.stripe_charges_enabled) {
+      throw new Error('This business has not finished connecting their Stripe account yet.')
+    }
 
     // Prefer an explicit amount (owner assessed the job and is requesting
     // payment for this specific booking), falling back to the booking's
@@ -72,25 +75,33 @@ Deno.serve(async (req) => {
 
     const origin = req.headers.get('origin') ?? Deno.env.get('SITE_URL') ?? ''
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      payment_method_types: ['card'],
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            unit_amount: Math.round(resolvedAmount * 100),
-            product_data: {
-              name: `${settings?.business_name ?? 'Appointment'} — ${booking.booking_date} ${booking.booking_time}`,
+    // Created directly on the connected account (Stripe-Account header, via
+    // the { stripeAccount } request option below) — this is a Standard
+    // Connect account the business owns outright, so the money settles
+    // straight to their own bank account. We never take a cut and the funds
+    // never pass through our platform account.
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        payment_method_types: ['card'],
+        line_items: [
+          {
+            price_data: {
+              currency: 'usd',
+              unit_amount: Math.round(resolvedAmount * 100),
+              product_data: {
+                name: `${settings?.business_name ?? 'Appointment'} — ${booking.booking_date} ${booking.booking_time}`,
+              },
             },
+            quantity: 1,
           },
-          quantity: 1,
-        },
-      ],
-      metadata: { booking_id: booking.id },
-      success_url: `${origin}/?booking_id=${booking.id}&paid=1`,
-      cancel_url: `${origin}/?booking_id=${booking.id}&paid=0`,
-    })
+        ],
+        metadata: { booking_id: booking.id },
+        success_url: `${origin}/?booking_id=${booking.id}&paid=1`,
+        cancel_url: `${origin}/?booking_id=${booking.id}&paid=0`,
+      },
+      { stripeAccount: settings.stripe_connected_account_id },
+    )
 
     await supabaseAdmin
       .from('bookings')

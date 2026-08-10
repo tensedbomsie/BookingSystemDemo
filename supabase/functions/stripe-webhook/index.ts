@@ -6,9 +6,13 @@
 // (must be --no-verify-jwt: Stripe calls this directly, it can't send a
 // Supabase auth header)
 //
-// After deploying, register the endpoint URL in the Stripe Dashboard
-// (Developers -> Webhooks) for the checkout.session.completed event, then
-// set STRIPE_WEBHOOK_SECRET from the signing secret Stripe shows you.
+// Two webhook destinations point at this same URL (register both in the
+// Stripe Dashboard -> Developers -> Webhooks):
+//   1. Scope "Your account" — our own platform-account test payments.
+//   2. Scope "Connected accounts" — real payments on behalf of businesses
+//      onboarded via Stripe Connect (where real customer payments land).
+// Each destination gets its own signing secret from Stripe. Set both via
+// the CLI secrets command (see project notes for exact env var names).
 
 import Stripe from 'npm:stripe@17'
 import { createClient } from 'jsr:@supabase/supabase-js@2'
@@ -22,7 +26,8 @@ const supabaseAdmin = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
 )
 
-const webhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET')!
+const platformSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET')!
+const connectSecret = Deno.env.get('STRIPE_CONNECT_WEBHOOK_SECRET')
 
 Deno.serve(async (req) => {
   const signature = req.headers.get('stripe-signature')
@@ -31,7 +36,12 @@ Deno.serve(async (req) => {
   let event: Stripe.Event
   try {
     if (!signature) throw new Error('Missing stripe-signature header')
-    event = await stripe.webhooks.constructEventAsync(body, signature, webhookSecret)
+    try {
+      event = await stripe.webhooks.constructEventAsync(body, signature, platformSecret)
+    } catch (platformErr) {
+      if (!connectSecret) throw platformErr
+      event = await stripe.webhooks.constructEventAsync(body, signature, connectSecret)
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Invalid signature'
     return new Response(`Webhook signature verification failed: ${message}`, { status: 400 })

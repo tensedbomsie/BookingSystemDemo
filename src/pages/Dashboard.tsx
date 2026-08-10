@@ -39,6 +39,7 @@ type BookingSettings = {
   venmo_handle: string | null
   zelle_handle: string | null
   cashapp_handle: string | null
+  stripe_charges_enabled: boolean
 }
 
 type BusinessHour = { day_of_week: number; is_open: boolean; start_time: string; end_time: string }
@@ -128,7 +129,7 @@ function BookingsTab() {
       supabase.from('bookings').select('*'),
       supabase
         .from('booking_settings')
-        .select('business_name, venmo_handle, zelle_handle, cashapp_handle')
+        .select('business_name, venmo_handle, zelle_handle, cashapp_handle, stripe_charges_enabled')
         .limit(1)
         .maybeSingle(),
     ])
@@ -150,6 +151,12 @@ function BookingsTab() {
 
   async function updateStatus(id: string, status: string) {
     await supabase.from('bookings').update({ status }).eq('id', id)
+    load()
+  }
+
+  async function deleteBooking(id: string) {
+    if (!window.confirm('Delete this booking permanently? This cannot be undone.')) return
+    await supabase.from('bookings').delete().eq('id', id)
     load()
   }
 
@@ -245,10 +252,15 @@ function BookingsTab() {
             </span>
             {b.status === 'confirmed' && (
               <>
-                {b.payment_status === 'not_required' && (
+                {b.payment_status === 'not_required' && settings?.stripe_charges_enabled && (
                   <button onClick={() => setPaymentRequestTarget(b)} className="btn-ghost text-xs">
                     Request Payment
                   </button>
+                )}
+                {b.payment_status === 'not_required' && settings && !settings.stripe_charges_enabled && (
+                  <span className="text-xs text-muted-foreground" title="Connect Stripe in Settings to request payment">
+                    Connect Stripe to request payment
+                  </span>
                 )}
                 <button onClick={() => setInvoiceTarget(b)} className="btn-ghost text-xs">
                   Mark Completed
@@ -263,6 +275,14 @@ function BookingsTab() {
                 Send Invoice
               </button>
             )}
+            <button
+              onClick={() => deleteBooking(b.id)}
+              className="btn-ghost text-xs text-muted-foreground transition-colors hover:text-red-400"
+              aria-label="Delete booking"
+              title="Delete booking"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
       ))}
@@ -587,6 +607,17 @@ function SettingsTab() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [stripeConnectedAccountId, setStripeConnectedAccountId] = useState<string | null>(null)
+  const [stripeChargesEnabled, setStripeChargesEnabled] = useState(false)
+  const [connecting, setConnecting] = useState(false)
+  const [checkingStatus, setCheckingStatus] = useState(false)
+
+  async function refreshConnectStatus() {
+    setCheckingStatus(true)
+    const { data, error } = await supabase.functions.invoke('connect-stripe', { body: { action: 'status' } })
+    setCheckingStatus(false)
+    if (!error && data) setStripeChargesEnabled(!!data.chargesEnabled)
+  }
 
   useEffect(() => {
     supabase
@@ -603,10 +634,30 @@ function SettingsTab() {
           setZelleHandle(data.zelle_handle ?? '')
           setCashappHandle(data.cashapp_handle ?? '')
           setDefaultPrice(data.default_price != null ? String(data.default_price) : '')
+          setStripeConnectedAccountId(data.stripe_connected_account_id ?? null)
+          setStripeChargesEnabled(!!data.stripe_charges_enabled)
         }
         setLoading(false)
+
+        // Landed back here from Stripe's onboarding flow — re-check with
+        // Stripe directly rather than trusting the redirect alone.
+        if (new URLSearchParams(window.location.search).get('stripe_connect') === 'return') {
+          refreshConnectStatus()
+        }
       })
   }, [])
+
+  async function startStripeConnect() {
+    setConnecting(true)
+    setMessage(null)
+    const { data, error } = await supabase.functions.invoke('connect-stripe', { body: { action: 'onboard' } })
+    setConnecting(false)
+    if (error || !data?.url) {
+      setMessage(error?.message ?? 'Could not start Stripe onboarding.')
+      return
+    }
+    window.location.href = data.url
+  }
 
   async function save(e: FormEvent) {
     e.preventDefault()
@@ -670,6 +721,38 @@ function SettingsTab() {
       <p className="text-xs text-muted-foreground">
         Add any combination — customers will see whichever payment methods you've set up when you send an invoice.
       </p>
+
+      <div className="border-t border-border pt-3">
+        <label className="mb-1 block text-xs font-medium text-muted-foreground">Card Payments (Stripe)</label>
+        {stripeChargesEnabled ? (
+          <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-400">
+            ✓ Connected — you can request card payments from the Bookings tab. Payments go straight to your own
+            Stripe account and bank, never through us.
+          </p>
+        ) : stripeConnectedAccountId ? (
+          <div className="space-y-2">
+            <p className="text-xs text-amber-400">Account created, but onboarding isn't finished yet with Stripe.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={startStripeConnect} disabled={connecting} className="btn-secondary text-xs">
+                {connecting ? 'Loading…' : 'Finish Stripe Setup'}
+              </button>
+              <button type="button" onClick={refreshConnectStatus} disabled={checkingStatus} className="btn-ghost text-xs">
+                {checkingStatus ? 'Checking…' : 'Re-check status'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Connect your own Stripe account to request card payments for bookings before the appointment. You'll
+              sign up with Stripe directly (your account, your bank, your terms) — we never see or hold your money.
+            </p>
+            <button type="button" onClick={startStripeConnect} disabled={connecting} className="btn-secondary text-xs">
+              {connecting ? 'Loading…' : 'Connect with Stripe'}
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="border-t border-border pt-3">
         <label className="mb-1 block text-xs font-medium text-muted-foreground">
