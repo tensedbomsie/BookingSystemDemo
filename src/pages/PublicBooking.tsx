@@ -21,6 +21,17 @@ export default function PublicBooking() {
           setPhone(data.phone)
         }
       })
+
+    const lead = new URLSearchParams(window.location.search).get('lead')
+    if (lead) {
+      fetch(`https://hub.ppchan.com/LeadDemos/leads/${encodeURIComponent(lead)}.json`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.businessName) setBusinessName(data.businessName)
+          if (data?.phone) setPhone(data.phone)
+        })
+        .catch(() => {})
+    }
   }, [])
 
   return (
