@@ -10,30 +10,38 @@ export default function PublicBooking() {
   const [phone, setPhone] = useState<string | null>(null)
 
   useEffect(() => {
+    const loadDefaultSettings = () =>
+      supabase
+        .from('booking_settings')
+        .select('business_name, phone')
+        .limit(1)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) {
+            setBusinessName(data.business_name)
+            setPhone(data.phone)
+          }
+        })
+
     const lead = new URLSearchParams(window.location.search).get('lead')
 
     if (lead) {
       fetch(`https://hub.ppchan.com/LeadDemos/leads/${encodeURIComponent(lead)}.json`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (data?.businessName) setBusinessName(data.businessName)
-          if (data?.phone) setPhone(data.phone)
+          if (data?.businessName) {
+            setBusinessName(data.businessName)
+            if (data?.phone) setPhone(data.phone)
+          } else {
+            // slug not found — fall back to the same default a normal visitor sees
+            loadDefaultSettings()
+          }
         })
-        .catch(() => {})
+        .catch(() => loadDefaultSettings())
       return
     }
 
-    supabase
-      .from('booking_settings')
-      .select('business_name, phone')
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) {
-          setBusinessName(data.business_name)
-          setPhone(data.phone)
-        }
-      })
+    loadDefaultSettings()
   }, [])
 
   return (
