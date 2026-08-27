@@ -8,6 +8,7 @@ export default function PublicBooking() {
   const [open, setOpen] = useState(false)
   const [businessName, setBusinessName] = useState('Sample Business')
   const [phone, setPhone] = useState<string | null>(null)
+  const [subtitle, setSubtitle] = useState('Pick a date and time that works for you — no calls, no waiting on a reply.')
 
   useEffect(() => {
     const loadDefaultSettings = () =>
@@ -32,6 +33,7 @@ export default function PublicBooking() {
           if (data?.businessName) {
             setBusinessName(data.businessName)
             if (data?.phone) setPhone(data.phone)
+            if (data?.subtitle) setSubtitle(data.subtitle)
           } else {
             // slug not found — fall back to the same default a normal visitor sees
             loadDefaultSettings()
@@ -51,9 +53,7 @@ export default function PublicBooking() {
         Self-Service Booking
       </span>
       <h1 className="max-w-xl text-3xl font-bold text-foreground sm:text-4xl">{businessName}</h1>
-      <p className="mt-4 max-w-md text-muted-foreground">
-        Pick a date and time that works for you — no calls, no waiting on a reply.
-      </p>
+      <p className="mt-4 max-w-md text-muted-foreground">{subtitle}</p>
       {phone && (
         <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
           <Phone className="h-3.5 w-3.5" />
