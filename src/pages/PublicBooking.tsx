@@ -9,6 +9,7 @@ export default function PublicBooking() {
   const [businessName, setBusinessName] = useState('Sample Business')
   const [phone, setPhone] = useState<string | null>(null)
   const [subtitle, setSubtitle] = useState('Pick a date and time that works for you — no calls, no waiting on a reply.')
+  const [leadSlug, setLeadSlug] = useState<string | null>(null)
 
   useEffect(() => {
     const loadDefaultSettings = () =>
@@ -25,6 +26,7 @@ export default function PublicBooking() {
         })
 
     const lead = new URLSearchParams(window.location.search).get('lead')
+    setLeadSlug(lead)
 
     if (lead) {
       fetch(`https://hub.ppchan.com/LeadDemos/leads/${encodeURIComponent(lead)}.json`)
@@ -66,7 +68,7 @@ export default function PublicBooking() {
         Book an Appointment
       </button>
 
-      <BookingModal open={open} onClose={() => setOpen(false)} businessName={businessName} />
+      <BookingModal open={open} onClose={() => setOpen(false)} businessName={businessName} leadSlug={leadSlug} />
 
       <Link to="/login" className="btn-ghost mt-14 text-xs">
         Business owner? Log in

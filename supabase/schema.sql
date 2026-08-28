@@ -145,6 +145,15 @@ alter table bookings add column if not exists payment_status text not null defau
   check (payment_status in ('not_required', 'pending_payment', 'paid'));
 alter table bookings add column if not exists stripe_checkout_session_id text;
 
+-- Which personalized LeadDemos page (hub.ppchan.com/LeadDemos/<slug>/) a
+-- booking came from, or null for the real business's own booking page.
+-- Every personalized demo shares this one Supabase project, so without
+-- this column a test booking made on one lead's demo would show up as a
+-- taken slot on every other lead's demo (and on the real owner's own
+-- dashboard) — scope every availability check and insert by this column
+-- instead of ever wiping the table.
+alter table bookings add column if not exists lead_slug text;
+
 alter table bookings enable row level security;
 
 -- Customers can create a booking, but cannot read other customers' PII.
@@ -173,8 +182,31 @@ create policy "owner can delete bookings" on bookings
 -- Views inherit querying user's permissions by default; this one is
 -- deliberately narrow (2 columns, confirmed-only) so it's safe to expose.
 create or replace view booking_availability as
-  select booking_date, booking_time
+  select booking_date, booking_time, lead_slug
   from bookings
   where status = 'confirmed';
 
 grant select on booking_availability to anon, authenticated;
+
+-- ── lead_page_views (view tracking for LeadDemos personalized teaser pages) ─
+-- Each personalized cold-outreach page (hub.ppchan.com/LeadDemos/<slug>/)
+-- logs a row here on load, write-only from the anon key so a lead's browser
+-- can log a view but can never read who else was tracked.
+create table if not exists lead_page_views (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null,
+  referrer text,
+  viewed_at timestamptz not null default now()
+);
+
+alter table lead_page_views enable row level security;
+
+drop policy if exists "anyone can log a page view" on lead_page_views;
+create policy "anyone can log a page view" on lead_page_views
+  for insert
+  with check (true);
+
+drop policy if exists "owner can read page views" on lead_page_views;
+create policy "owner can read page views" on lead_page_views
+  for select
+  using (auth.role() = 'authenticated');

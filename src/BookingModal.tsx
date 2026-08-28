@@ -35,10 +35,12 @@ export default function BookingModal({
   open,
   onClose,
   businessName = 'this business',
+  leadSlug = null,
 }: {
   open: boolean
   onClose: () => void
   businessName?: string
+  leadSlug?: string | null
 }) {
   const today = useMemo(() => new Date(), [])
   const [step, setStep] = useState<Step>('calendar')
@@ -85,11 +87,13 @@ export default function BookingModal({
     const last = toIsoDate(viewYear, viewMonth, new Date(viewYear, viewMonth + 1, 0).getDate())
     ;(async () => {
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('booking_availability')
           .select('booking_date, booking_time')
           .gte('booking_date', first)
           .lte('booking_date', last)
+        query = leadSlug ? query.eq('lead_slug', leadSlug) : query.is('lead_slug', null)
+        const { data, error } = await query
         if (error) throw error
         const map: Record<string, Set<string>> = {}
         for (const row of data ?? []) {
@@ -103,7 +107,7 @@ export default function BookingModal({
         setLoadingMonth(false)
       }
     })()
-  }, [open, viewYear, viewMonth])
+  }, [open, viewYear, viewMonth, leadSlug])
 
   const cells = buildMonthGrid(viewYear, viewMonth)
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth()
@@ -192,6 +196,7 @@ export default function BookingModal({
       booking_time: selectedTime,
       status: 'confirmed',
       payment_status: 'not_required',
+      lead_slug: leadSlug,
     })
     setSubmitting(false)
     if (error) {

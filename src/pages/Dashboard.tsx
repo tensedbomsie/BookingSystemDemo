@@ -126,7 +126,9 @@ function BookingsTab() {
 
   async function load() {
     const [{ data, error }, { data: settingsData }] = await Promise.all([
-      supabase.from('bookings').select('*'),
+      // Only this business's own bookings — never the test bookings made on
+      // a personalized LeadDemos prospecting page (those carry a lead_slug).
+      supabase.from('bookings').select('*').is('lead_slug', null),
       supabase
         .from('booking_settings')
         .select('business_name, venmo_handle, zelle_handle, cashapp_handle, stripe_charges_enabled')
